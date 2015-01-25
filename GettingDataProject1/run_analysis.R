@@ -78,6 +78,9 @@ col_select <- grep(".((\\-mean\\(\\))|(\\-std\\(\\)))", names(uci_data))
 uci_data_use <- uci_data[, c(1, 3, col_select)] #drops activity_num
 names(uci_data_use) <- gsub("-", "_", names(uci_data_use))
 names(uci_data_use) <- gsub("\\(\\)", "", names(uci_data_use))
+names(uci_data_use)[63:68] <- c("fBodyAccJerkMag_mean", "fBodyAccJerkMag_std",
+                                "fBodyGyroMag_mean", "fBodyGyroMag_std", 
+                                "fBodyGyroJerkMag_mean", "fBodyGyroJerkMag_std")
 
 #Create tidy dataset
 uci_tidy <- gather(uci_data_use, feature, measurement, -subject_id, -activity_label) %>%

@@ -46,7 +46,7 @@ Below is the codebook for the data in ```uci_tidy.txt```. Note:
 * For each measure feature (e.g. ```tBodyAcc```), the mean and standard deviation of the signals collected during that window of time were taken for each axis (X, Y, Z). The codebook only defines the signal labels and omits the specifics of each signal estimate.
 * Magnitude measurements (e.g. ```tBodyAccMag```) are calculated from the individual axis measurements. Thus, they do not have individual axis values.
 
-There are 180 observations and 68 variables in the final dataset.
+There are 180 observations and 68 variables in the final dataset. All measurements were normalized and, thus, unitless.
 
 Variable     | Label
 ------------- | -------------
@@ -66,6 +66,6 @@ fBodyAcc | Body acceleration in the frequency domain
 fBodyAccJerk   | Body acceleration jerk in the frequency domain
 fBodyGyro | Body angular speed in the frequency domain
 fBodyAccMag | Body acceleration magnitude in the frequency domain
-fBodyBodyAccJerkMag | Body acceleration jerk magnitude in the frequency domain
-fBodyBodyGyroMag | Body angular speed magnitude in the frequency domain
-fBodyBodyGyroJerkMag | Body angular acceleration magnitude in the frequency domain
+fBodyAccJerkMag | Body acceleration jerk magnitude in the frequency domain
+fBodyGyroMag | Body angular speed magnitude in the frequency domain
+fBodyGyroJerkMag | Body angular acceleration magnitude in the frequency domain
