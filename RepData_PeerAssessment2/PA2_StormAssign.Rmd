@@ -1,0 +1,311 @@
+---
+output: 
+  html_document:
+    keep_md: true
+---
+
+##Tornado and Floods: Weather Conditions of Consequence
+
+<p style="font-size: 13pt; line-height:18pt"> 
+**Author:** Florence Lee<br>
+**Date:** 02-22-2015<br>
+**Assignment:** RepData_PeerAssessment2</p>
+
+====
+
+###Synopsis
+
+The purpose of this report is to utilize weather data to determine (1) which weather events posed the greatest threat to population health in the United States and (2) which weather events were the most costly. To meet our objectives, we used data provided by the US National Oceanic and Atmospheric Administration (NOAA). The dataset captures storms and other significant weather events between 1950 and the end of November 2011 for a total of 902,297 observations. At the end of our investigation, we discovered that tornados carried the greatest public health cost, while floods and hurricanes carried the greatest economic cost. The details of our findings are outlined below.
+
+###Loading the Raw Data
+
+The raw data and its accompanying documentation can be retrieved from the NOAA website. Set your working directory and run the following code to save the dataset locally and load the dataset into R. The dataset is large and may take a few minutes to download. 
+
+```{r loadData, cache=TRUE}
+setwd("~/Desktop/DataScienceCoursera/RepData_PeerAssessment2") #change path to your working directory
+download.file("https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2", 
+              method = "curl", destfile = "stormdata.csv.bz2")
+stormdata <- read.csv(bzfile("stormdata.csv.bz2"))
+```
+
+For this analysis, we used a few R packages that must be retrieved from the CRAN server. These packages can be loaded into RStudio using the ```library()``` function.
+
+```{r loadLib, message=FALSE}
+library(plyr) 
+library(dplyr)
+library(tidyr)
+library(datasets)
+library(lubridate)
+library(ggplot2)
+```
+
+###Cleaning and Processing the Data
+
+After reading in the data, we explored the variables in the dataset:
+
+```{r explore}
+str(stormdata)
+```
+
+Of the 37 variables, we are primarily concerned with ```BGN_DATE```, ```STATE```, ```EVTYPE```, ```FATALITIES```, ```INJURIES```, ```PROPDMG```, ```PROPDMGEXP```, ```CROPDMG```, and ```CROPDMGEXP``` for this investigation. For more thorough documentation on these variables, refer to the NOAA website. 
+
+**Cleaning STATE Variable**
+
+```STATE``` is a factor variable with 72 different levels.
+
+```{r States}
+unique(stormdata$STATE)
+```
+
+For the purposes of this analysis, we limited our dataset to only events that occurred in the 50 states, which means US territories (e.g. Puerto Rico) will be unaccounted for. To do this, we used the ```state.abb``` dataset that comes with the ```dataset``` package. 
+
+```{r 50States}
+stormdat2 <- stormdata[which(as.character(stormdata$STATE) %in% state.abb),]
+length(unique(stormdat2$STATE))
+```
+
+By removing events from regions outside of the 50 states, we lose about 2.12% of the raw data. Because the proportion is not alarmingly large, we do not expect this will affect the result of our investigation.
+
+**Clean Date Variables**
+
+There are two date variables in ```stormdat2```: the beginning date (```BGN_DATE```) and the end date (```END_DATE```). Even though we will not use these variables in our final analysis, it would be nice to have them in the proper format to explore our dataset further. 
+
+```{r dateClean} 
+stormdat2$BGN_DATE <- as.POSIXct(strptime(stormdat2$BGN_DATE, "%m/%d/%Y %H:%M:%S"))
+stormdat2$END_DATE <- as.POSIXct(strptime(stormdat2$END_DATE, "%m/%d/%Y %H:%M:%S"))
+```
+
+Converting the two variables into dates in this manner is imperfect, since not all the times share the same time zone (```TIME_ZONE```). We can, however, still use the year of each date to get an idea of when most our data was recorded. (We will explore this further after we clean ```EVTYPE```. 
+
+**Clean EVTYPE**
+
+According to the Storm Data Preparation document that accompanies this dataset, the NOAA only permits 48 different event types. And yet, this dataset contains over 985 event labels. 
+
+```{r eventExplore}
+unique(stormdat2$EVTYPE)[order(unique(stormdat2$EVTYPE))]
+```
+
+Sorting them by event shows that this discrepancy can be primarily attributed to one of three reasons:
+
+1. Events are labeled inconsistently (e.g. Tstm Wind TSTM WIND, TSTM WIND 51 for thunderstorm wind).
+2. Events outside of the NOAA's permitted list are included (e.g. UNSEASONABLY COLD).
+3. Some observations are summaries rather than events (e.g. Summary August 7).
+
+Since we are only interested in the events that have the greatest public health and economic impact on the country, these discrepancies in the raw data will have minimal effects on the final conclusion. Still, we decided to make the letter case of all the event names consistent, remove non-events, and collapse similar categories because this will ultimately make our findings a little more robust. When collapsing similar categories, we used the NOAA's permitted list as a guide for naming conventions.
+
+```{r eventClean}
+#Deal with inconsistent letter case
+stormdat2$EVTYPE <- toupper(stormdat2$EVTYPE)
+#Delete leading spaces
+stormdat2$EVTYPE <- gsub(pattern = "^[ \t]+", replacement = "", x = stormdat2$EVTYPE)
+#Delete "RECORD" event types
+#Only comprise of 0.05% of the records
+#Save into separate dataset in case you want to analyze
+stormdat3 <- stormdat2[-grep(pattern = "RECORD", x = stormdat2$EVTYPE),]
+#Delete non-events (e.g. SUMMARY, NONE, ?)
+stormdat3 <- stormdat3[-grep(pattern = "MINOR|MONTHLY|SUMMARY|ABNORMAL|UNSEASON|UNUSUAL|WEATHER|^LATE|MONTH|YEAR|LIGHT ", stormdat3$EVTYPE),]
+stormdat4 <- stormdat3[-which(stormdat3$EVTYPE== "?" | stormdat3$EVTYPE=="NONE"),]
+#Clean AVALANCHE
+stormdat4$EVTYPE[grep(pattern = "^AVAL", x = stormdat4$EVTYPE)] <- "AVALANCHE"
+#Combine all BLIZZARD events
+#Often combined with Heavy Snow, Freezing Rain, High Winds, which are characteristic of blizzards
+stormdat4$EVTYPE[grep(pattern = "^BLIZZARD", x = stormdat4$EVTYPE)] <- "BLIZZARD"
+#Combine all THUNDERSTORM events
+stormdat4$EVTYPE[grep(pattern = "^TSTM|THUNDERSTORM|^THU|^TUN", x = stormdat4$EVTYPE)] <- "TSTM WIND"
+#Combine all ICESTORM events
+stormdat4$EVTYPE[grep(pattern = "ICE STORM|ICESTORM", x = stormdat4$EVTYPE)] <- "ICE STORM"
+#Combine all WINTER STORM events
+stormdat4$EVTYPE[grep(pattern = "WINTER STORM", x = stormdat4$EVTYPE)] <- "WINTER STORM"
+#Combine all HURRICANE events
+stormdat4$EVTYPE[grep(pattern = "HURRICANE", x = stormdat4$EVTYPE)] <- "HURRICANE"
+#Combine all WATERSPOUT events
+stormdat4$EVTYPE[grep(pattern = "WATER SPOUT|WATERSPOUT|RSPOUT", x = stormdat4$EVTYPE)] <- "WATERSPOUT"
+#Combine HAIL events
+stormdat4$EVTYPE[grep(pattern = "HAIL", x = stormdat4$EVTYPE)] <- "HAIL"
+#Combine HIGH WINDS values into HIGH WINDS
+stormdat4$EVTYPE[grep(pattern = "^HIGH WIND|^WHIRLWIND", x = stormdat4$EVTYPE)] <- "HIGH WIND"
+#Combine all TROPICAL STORM events
+stormdat4$EVTYPE[grep(pattern = "TROPICAL STORM", x = stormdat4$EVTYPE)] <- "TROPICAL STORM"
+#Combine all TORNADO events
+stormdat4$EVTYPE[grep(pattern = "TORNADO|^TORN", x = stormdat4$EVTYPE)] <- "TORNADO"
+#Combine all WILDFIRE events
+stormdat4$EVTYPE[grep(pattern = "WILD|FOREST", x = stormdat4$EVTYPE)] <- "WILDFIRE"
+#Combine all LIGHTNING events
+stormdat4$EVTYPE[grep(pattern = "^LIG.+ING$|LIGHTNING", x = stormdat4$EVTYPE)] <- "LIGHTNING"
+#Combine all HEAVY SNOW and SNOWSTORM events
+stormdat4$EVTYPE[grep(pattern = "HEAVY SNOW|SNOWSTORM", x = stormdat4$EVTYPE)] <- "HEAVY SNOW"
+#Combine all HEAVY RAIN events
+stormdat4$EVTYPE[grep(pattern = "HEAVY RAIN|RAINSTORM|RAIN DAMAGE", x = stormdat4$EVTYPE)] <- "HEAVY RAIN"
+#Combine all ICY CONDITION events
+stormdat4$EVTYPE[grep(pattern = "ICE\\s[^S].+$|.+ICE|^ICE$|^ICE\\S|ICY", x = stormdat4$EVTYPE)] <- "ICY CONDITIONS"
+#Combine all HEAT events
+stormdat4$EVTYPE[grep(pattern = "HEAT", x = stormdat4$EVTYPE)] <- "HEAT"
+#Combine WINTER/WINTER STORM events
+stormdat4$EVTYPE[grep(pattern = "^WIN\\w+\\sMIX$", x = stormdat4$EVTYPE)] <- "WINTER STORM"
+#Combine all HIGH WIND events
+stormdat4$EVTYPE[grep(pattern = "HIGH WIND|STORM FORCE WIND|WHRILWIND|WIND STORM|STRONG WIND|^WIND DAMAGE", x = stormdat4$EVTYPE)] <- "HIGH WIND"
+#Combine all FROST events
+stormdat4$EVTYPE[grep(pattern = "FROST", x = stormdat4$EVTYPE)] <- "FROST/FREEZE"
+#Combine all FUNNEL CLOUD events
+stormdat4$EVTYPE[grep(pattern = "FUNNEL", x = stormdat4$EVTYPE)] <- "FUNNEL CLOUD"
+##Combine all FOG events
+stormdat4$EVTYPE[grep(pattern = "^(\\w+)OG$|FOG", x = stormdat4$EVTYPE)] <- "DENSE FOG"
+##Create distinct FLOOD events (FLASH, COASTAL, LAKESHORE, FLOOD)
+stormdat4$EVTYPE[grep(pattern = "FLASH", x = stormdat4$EVTYPE)] <- "FLASH FLOOD"
+stormdat4$EVTYPE[grep(pattern = "^C(\\w+)L(\\s)F|N/C(\\w+)L(\\s)F|TIDAL|COASTALFLOOD|BEACH FLOOD", x = stormdat4$EVTYPE)] <- "COASTAL FLOOD"
+stormdat4$EVTYPE[grep(pattern = "LAKE(\\w*)\\sFLOOD", x = stormdat4$EVTYPE)] <- "LAKESHORE FLOOD"
+stormdat4$EVTYPE[grep(pattern = "^[^FLC](.*)(\\s*)(.*)(\\s*)FL(\\w*)D(\\w*)$", x = stormdat4$EVTYPE)] <- "FLOOD"
+stormdat4$EVTYPE[grep(pattern = "^FLOOD", x = stormdat4$EVTYPE)] <- "FLOOD"
+#Combine all SLEET events
+stormdat4$EVTYPE[grep(pattern = "SLEET", x = stormdat4$EVTYPE)] <- "SLEET"
+#Clean RIP CURRENT events
+stormdat4$EVTYPE[grep(pattern = "RIP", x = stormdat4$EVTYPE)] <- "RIP CURRENT"
+#Clean HEAVY SURF events
+stormdat4$EVTYPE[grep(pattern = "SURF", x = stormdat4$EVTYPE)] <- "HEAVY SURF"
+#Combine COLD/WINDCHILL events
+stormdat4$EVTYPE[grep(pattern = "COLD|CHILL", x = stormdat4$EVTYPE)] <- "COLD/WIND CHILL"
+#Combine STORM SURGE/TIDE events
+stormdat4$EVTYPE[grep(pattern = "STORM SURGE", x = stormdat4$EVTYPE)] <- "STORM SURGE/TIDE"
+```
+
+Even though our final list of EVTYPES is not completely clean, we are now down to 222 event types. The majority of the categories in the NOAA permitted list are cleaned.
+
+```{r eventCleanPrint}
+unique(stormdat4$EVTYPE)[order(unique(stormdat4$EVTYPE))]
+```
+
+**Number of Events Recorded Per Year**
+
+In order to get a sense of how our data was collected from 1950 to 2011, we created a histogram of the number of events per year.
+
+```{r eventsPerYear}
+eventsByDate <- as.data.frame(table(stormdat4$EVTYPE, year(stormdat4$BGN_DAT)))
+names(eventsByDate) <- c("Event", "Year", "NumEvents")
+eventsByYear <- summarise(group_by(eventsByDate, Year), TotalEvents = sum(NumEvents))
+evBase <- ggplot(eventsByYear, aes(x = Year, y = TotalEvents)) + 
+     geom_bar(stat = "identity")
+evLabel <- labs(title = "Weather Events Documented from 1950 to 2011", 
+                    x = "Year", y = "Number of Events")
+evBase + theme_bw() + evLabel
+```
+
+Most of the documented weather events in this data set were collected after 1994. This suggests that there were either an increase in severe weather events after 1994 OR that data collection efforts were much more regimented closer to the turn of the century. Either way, this is something to keep in mind as we examine our findings. 
+
+###Results
+
+**Weather Events of Greatest Public Health Consequence**
+
+In order to determine the weather events of the greatest public health consequence, we were interested in looking at ```FATALITIES``` and ```INJURIES``` due to certain ```EVTYPE```. The weather events that are most deterimental to population health will be those that result in the greatest number (or sum) of fatalities and injuries. 
+
+First, we want to create two tables: one for total fatalities by event type and one for total injuries by event type.
+
+```{r hlthTables}
+eventFatal <- summarise(group_by(stormdat4, EVTYPE), TotalFatal=sum(FATALITIES))
+eventFatal <- arrange(eventFatal, desc(TotalFatal))
+head(eventFatal, n = 10)
+eventInj <- summarise(group_by(stormdat4, EVTYPE), TotalInj=sum(INJURIES))
+eventInj <- arrange(eventInj, desc(TotalInj))
+head(eventInj, n = 10)
+```
+
+In regards to both fatalities and injuries, tornados seem to hurt the population the most. To create a visual of this, we have to first join the two tables on ```EVTYPE``` and then select the top 10 to display. The following table, ```eventSumTop``` shows the top 10 events, ordered by the total number of fatalities and injuries.
+
+```{r hlthAggTable}
+eventSum <- join(x = eventFatal, y = eventInj)
+eventSum2 <- mutate(eventSum, Total = TotalInj + TotalFatal)
+eventSum2 <- arrange(eventSum2, desc(Total))
+eventSumTop <- select(eventSum2[1:10,], -Total)
+names(eventSumTop) <- c("Event", "Fatalities", "Injuries")
+eventSumTop
+```
+
+```{r hlthAggGraph}
+eventSumMelt <- gather(data = eventSumTop, key = Measure, value = Count, c(Fatalities, Injuries))
+hlthbase <- ggplot(eventSumMelt, aes(x = factor(Event, levels = unique(rev(Event))), y = Count, 
+                                 fill = Measure)) + geom_bar(stat = "identity")
+hlthlabels <- labs(title = "Top 10 Weather Conditions of Public Health Consequence",
+               x = "Weather Event", y = "Count")
+mycol <- c("#BE4722", "#D1AF40")
+hlthcolors <- scale_fill_manual(values=mycol)
+hlthbase + coord_flip() + theme_bw() + hlthlabels + hlthcolors
+```
+
+Even if we had separated this stacked bar graph into two separate graphs--one for the top 10 events based on fatalities and another for the top 10 events based on injuries--tornados would still come out as the most injurious of all weather events. 
+
+**Weather Events of Greatest Economic Consequence**
+
+In order to determine the total economic cost of each weather event based on property damage and crop damage, we have to look at the following columns: ```PROPDMG```, ```CROPDMG```, ```PROPDMGEXP```, and ```CROPDMGEXP```. The ```-EXP``` columns give us the multiplier for each value in listed in ```PROPDMG``` and ```CROPDMG```. Below is a list of the levels in ```-EXP``` and their accompanying multiplier.
+
+-EXP     | Multiplier
+------------- | -------------
+H | 100
+K | 1000
+M | 1,000,000
+B | 1,000,000,000
+- | 0
++ | 1
+? | 0
+0-9 | 10
+
+Because we are interested in the value of the damages, we will need to create two additional columns: one for the *value* of property damage and one for the *value* of crop damage.
+
+```{r dmgClean}
+#For PROPDMG
+stormdat4$PROPDMGEXP <- toupper(stormdat4$PROPDMGEXP)
+stormdat4$PROPEXP <- stormdat4$PROPDMGEXP
+pExp <- unique(stormdat4$PROPDMGEXP)
+pExpVal <- c(1e3, 1e6, 0, 1e9, 1, 10, 10, 10, 0, 10, 10, 10, 1e2, 10, 0, 10, 10)
+for (i in seq_along(pExp)) {
+     stormdat4$PROPEXP[which(stormdat4$PROPDMGEXP==pExp[i])] <- pExpVal[i] 
+}
+stormdat4$PROPEXP <- as.numeric(stormdat4$PROPEXP)
+stormdat4 <- mutate(stormdat4, PROPDMGVAL = PROPEXP*PROPDMG)
+
+#For CROPDMG
+stormdat4$CROPDMGEXP <- toupper(as.character(stormdat4$CROPDMGEXP))
+stormdat4$CROPEXP <- stormdat4$CROPDMGEXP
+cExp <- unique(stormdat4$CROPDMGEXP)
+cExpVal <- c(0, 1e6, 1e3, 1e9, 0, 10, 10)
+for (i in seq_along(cExp)) {
+     stormdat4$CROPEXP[which(stormdat4$CROPDMGEXP==cExp[i])] <- cExpVal[i] 
+}  
+stormdat4$CROPEXP <- as.numeric(stormdat4$CROPEXP)
+stormdat4 <- mutate(stormdat4, CROPDMGVAL = CROPEXP*CROPDMG)
+```
+
+Now that we have the value of property damage (```PROPDMGVAL```) and the value of crop damage (```CROPDMGVAL```), we can create one table for total property damage by event and another for total crop damage by event.
+
+```{r dmgTables}
+eventProp <- summarise(group_by(stormdat4, EVTYPE), TotalProp=sum(PROPDMGVAL))
+eventProp <- arrange(eventProp, desc(TotalProp))
+head(eventProp, n = 10)
+eventCrop <- summarise(group_by(stormdat4, EVTYPE), TotalCrop=sum(CROPDMGVAL))
+eventCrop <- arrange(eventCrop, desc(TotalCrop))
+head(eventCrop, n = 10)
+```
+
+Here, we see that FLOOD is the most costly in terms of property damage, but DROUGHT is the most costly in terms of crop damage. If we wanted to lump property damage and crop damage into one--for an aggregate measure of economic cost--we can do that by joining the two tables.
+
+```{r dmgAggTable}
+eventDmgSum <- join(x = eventProp, y = eventCrop)
+eventDmgSum2 <- mutate(eventDmgSum, Total = TotalProp + TotalCrop)
+eventDmgSum2 <- arrange(eventDmgSum2, desc(Total))
+eventDmgTop <- select(eventDmgSum2[1:10,], -Total)
+names(eventDmgTop) <- c("Event", "Property", "Crop")
+eventDmgTop
+```
+
+When we order the events based on TOTAL economic cost, we see that FLOODS are the most costly of all the severe weather events based on NOAA data. We can visualize this information in a bar graph:
+
+```{r dmgAggGraph}
+eventDmgMelt <- gather(data = eventDmgTop, key = Asset, value = Count, c(Property, Crop))
+dmgbase <- ggplot(eventDmgMelt, aes(x = factor(Event, levels = unique(rev(Event))), y = Count, 
+                                 fill = Asset)) + geom_bar(stat = "identity")
+dmglabels <- labs(title = "Top 10 Weather Conditions of Economic Consequence",
+               x = "Weather Event", y = "Count")
+mycol <- c("#C0BF8B", "#709E30")
+dmgcolors <- scale_fill_manual(values=mycol)
+dmgbase + coord_flip() + theme_bw() + dmglabels + dmgcolors
+```
+
+Based on the graph, we see that even though FLOODS, HURRICANES, TORNADOS, and STORM SURGES resulted in the most economic damage from 1950 to 2011. The bulk of their costs were attributed to damaged property. Interestingly, DROUGHTS were only the 7th most costly  event despite carrying the greatest cost due to damaged crops.
